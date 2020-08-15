@@ -2,12 +2,18 @@
 #
 # pwm.py - Output for GPIO PWM
 #
+
 import copy
 
 from flask_babel import lazy_gettext
+from sqlalchemy import and_
 
+from mycodo.databases.models import DeviceMeasurements
 from mycodo.outputs.base_output import AbstractOutput
+from mycodo.utils.database import db_retrieve_table_daemon
 from mycodo.utils.influx import add_measurements_influxdb
+from mycodo.utils.influx import read_last_influxdb
+from mycodo.utils.system_pi import return_measurement_info
 
 # Measurements
 measurements_dict = {
@@ -23,8 +29,6 @@ OUTPUT_INFORMATION = {
     'output_name': "{} GPIO".format(lazy_gettext('PWM')),
     'output_library': 'pigpio',
     'measurements_dict': measurements_dict,
-
-    'on_state_internally_handled': False,
     'output_types': ['pwm'],
 
     'message': 'See the PWM section of the manual for PWM information and determining which '
@@ -57,17 +61,17 @@ class OutputModule(AbstractOutput):
     def __init__(self, output, testing=False):
         super(OutputModule, self).__init__(output, testing=testing, name=__name__)
 
-        self.output_setup = None
+        self.state_startup = None
+        self.startup_value = None
+        self.state_shutdown = None
+        self.shutdown_value = None
         self.pwm_library = None
         self.pin = None
         self.pwm_hertz = None
         self.pwm_invert_signal = None
         self.pwm_output = None
 
-        if not testing:
-            self.initialize_output()
-
-    def initialize_output(self):
+    def setup_output(self):
         import pigpio
 
         self.pigpio = pigpio
@@ -76,6 +80,73 @@ class OutputModule(AbstractOutput):
         self.pin = self.output.pin
         self.pwm_hertz = self.output.pwm_hertz
         self.pwm_invert_signal = self.output.pwm_invert_signal
+        self.state_startup = self.output.state_startup
+        self.startup_value = self.output.startup_value
+        self.state_shutdown = self.output.state_shutdown
+        self.shutdown_value = self.output.shutdown_value
+        self.setup_on_off_output(OUTPUT_INFORMATION)
+
+        error = []
+        if self.pin is None:
+            error.append("Pin must be set")
+        if self.pwm_hertz <= 0:
+            error.append("PWM Hertz must be a positive value")
+        if error:
+            for each_error in error:
+                self.logger.error(each_error)
+            return
+
+        try:
+            self.pwm_output = self.pigpio.pi()
+            if not self.pwm_output.connected:
+                self.logger.error("Could not connect to pigpiod")
+                self.pwm_output = None
+                return
+            if self.pwm_library == 'pigpio_hardware':
+                self.pwm_output.hardware_PWM(
+                    self.pin, self.pwm_hertz, 0)
+            elif self.pwm_library == 'pigpio_any':
+                self.pwm_output.set_PWM_frequency(
+                    self.pin, self.pwm_hertz)
+                self.pwm_output.set_PWM_dutycycle(
+                    self.pin, 0)
+
+            self.output_setup = True
+            self.logger.info("Output setup on pin {}".format(self.pin))
+
+            if self.state_startup == '0':
+                self.output_switch('off')
+            elif self.state_startup == 'set_duty_cycle':
+                self.output_switch('on', amount=self.startup_value)
+            elif self.state_startup == 'last_duty_cycle':
+                device_measurement = db_retrieve_table_daemon(DeviceMeasurements).filter(
+                    and_(DeviceMeasurements.device_id == self.unique_id,
+                         DeviceMeasurements.channel == 0)).first()
+
+                last_measurement = None
+                if device_measurement:
+                    channel, unit, measurement = return_measurement_info(device_measurement, None)
+                    last_measurement = read_last_influxdb(
+                        self.unique_id,
+                        unit,
+                        channel,
+                        measure=measurement,
+                        duration_sec=None)
+
+                if last_measurement:
+                    self.logger.info(
+                        "Setting startup duty cycle to last known value of {dc} %".format(
+                            dc=last_measurement[1]))
+                    self.output_switch('on', amount=last_measurement[1])
+                else:
+                    self.logger.error(
+                        "Output instructed at startup to be set to "
+                        "the last known duty cycle, but a last known "
+                        "duty cycle could not be found in the measurement "
+                        "database")
+        except Exception as except_msg:
+            self.logger.exception("Output was unable to be setup on pin {pin}: {err}".format(
+                pin=self.pin, err=except_msg))
 
     def output_switch(self, state, output_type=None, amount=None):
         measure_dict = copy.deepcopy(measurements_dict)
@@ -117,41 +188,7 @@ class OutputModule(AbstractOutput):
             return False
 
     def is_setup(self):
-        if self.output_setup:
-            return True
-        return False
-
-    def setup_output(self):
-        error = []
-        if self.pin is None:
-            error.append("Pin must be set")
-        if self.pwm_hertz <= 0:
-            error.append("PWM Hertz must be a positive value")
-        if error:
-            for each_error in error:
-                self.logger.error(each_error)
-            return
-
-        try:
-            self.pwm_output = self.pigpio.pi()
-            if not self.pwm_output.connected:
-                self.logger.error("Could not connect to pigpiod")
-                self.pwm_output = None
-                return
-            if self.pwm_library == 'pigpio_hardware':
-                self.pwm_output.hardware_PWM(
-                    self.pin, self.pwm_hertz, 0)
-            elif self.pwm_library == 'pigpio_any':
-                self.pwm_output.set_PWM_frequency(
-                    self.pin, self.pwm_hertz)
-                self.pwm_output.set_PWM_dutycycle(
-                    self.pin, 0)
-
-            self.output_setup = True
-            self.logger.info("Output setup on pin {}".format(self.pin))
-        except Exception as except_msg:
-            self.logger.exception("Output was unable to be setup on pin {pin}: {err}".format(
-                pin=self.pin, err=except_msg))
+        return self.output_setup
 
     @staticmethod
     def duty_cycle_to_pigpio_value(duty_cycle):

@@ -2,13 +2,19 @@
 #
 # command_pwm.py - Output for executing linux commands with PWM
 #
+
 import copy
 
 from flask_babel import lazy_gettext
+from sqlalchemy import and_
 
+from mycodo.databases.models import DeviceMeasurements
 from mycodo.outputs.base_output import AbstractOutput
+from mycodo.utils.database import db_retrieve_table_daemon
 from mycodo.utils.influx import add_measurements_influxdb
+from mycodo.utils.influx import read_last_influxdb
 from mycodo.utils.system_pi import cmd_output
+from mycodo.utils.system_pi import return_measurement_info
 
 # Measurements
 measurements_dict = {
@@ -24,8 +30,6 @@ OUTPUT_INFORMATION = {
     'output_name': "{} Shell Script".format(lazy_gettext('PWM')),
     'output_library': 'subprocess.Popen',
     'measurements_dict': measurements_dict,
-
-    'on_state_internally_handled': False,
     'output_types': ['pwm'],
 
     'message': 'Commands will be executed in the Linux shell by the specified user when the duty cycle '
@@ -53,19 +57,61 @@ class OutputModule(AbstractOutput):
     def __init__(self, output, testing=False):
         super(OutputModule, self).__init__(output, testing=testing, name=__name__)
 
-        self.output_setup = None
+        self.state_startup = None
+        self.startup_value = None
+        self.state_shutdown = None
+        self.shutdown_value = None
         self.pwm_state = None
         self.pwm_command = None
         self.linux_command_user = None
         self.pwm_invert_signal = None
 
-        if not testing:
-            self.initialize_output()
-
-    def initialize_output(self):
+    def setup_output(self):
         self.pwm_command = self.output.pwm_command
         self.linux_command_user = self.output.linux_command_user
         self.pwm_invert_signal = self.output.pwm_invert_signal
+        self.state_startup = self.output.state_startup
+        self.startup_value = self.output.startup_value
+        self.state_shutdown = self.output.state_shutdown
+        self.shutdown_value = self.output.shutdown_value
+        self.setup_on_off_output(OUTPUT_INFORMATION)
+
+        if self.pwm_command:
+            self.output_setup = True
+
+            if self.state_startup == '0':
+                self.output_switch('off')
+            elif self.state_startup == 'set_duty_cycle':
+                self.output_switch('on', amount=self.startup_value)
+            elif self.state_startup == 'last_duty_cycle':
+                device_measurement = db_retrieve_table_daemon(DeviceMeasurements).filter(
+                    and_(DeviceMeasurements.device_id == self.unique_id,
+                         DeviceMeasurements.channel == 0)).first()
+
+                last_measurement = None
+                if device_measurement:
+                    channel, unit, measurement = return_measurement_info(device_measurement, None)
+                    last_measurement = read_last_influxdb(
+                        self.unique_id,
+                        unit,
+                        channel,
+                        measure=measurement,
+                        duration_sec=None)
+
+                if last_measurement:
+                    self.logger.info(
+                        "Setting startup duty cycle to last known value of {dc} %".format(
+                            dc=last_measurement[1]))
+                    self.output_switch('on', amount=last_measurement[1])
+                else:
+                    self.logger.error(
+                        "Output instructed at startup to be set to "
+                        "the last known duty cycle, but a last known "
+                        "duty cycle could not be found in the measurement "
+                        "database")
+        else:
+            self.output_setup = False
+            self.logger.error("Output must have command set")
 
     def output_switch(self, state, output_type=None, amount=None):
         measure_dict = copy.deepcopy(measurements_dict)
@@ -108,12 +154,4 @@ class OutputModule(AbstractOutput):
             return False
 
     def is_setup(self):
-        if self.output_setup:
-            return True
-
-    def setup_output(self):
-        if self.pwm_command:
-            self.output_setup = True
-        else:
-            self.output_setup = False
-            self.logger.error("Output must have command set")
+        return self.output_setup

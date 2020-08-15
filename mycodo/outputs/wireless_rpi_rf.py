@@ -19,8 +19,6 @@ OUTPUT_INFORMATION = {
     'output_name': "{} 315/433 MHz".format(lazy_gettext("Wireless")),
     'output_library': 'rpi-rf',
     'measurements_dict': measurements_dict,
-
-    'on_state_internally_handled': False,
     'output_types': ['on_off'],
 
     'message': 'This output uses a 315 or 433 MHz transmitter to turn wireless power outlets on or off. '
@@ -60,6 +58,8 @@ class OutputModule(AbstractOutput):
 
         self.wireless_pi_switch = None
         self.Transmit433MHz = None
+        self.state_startup = None
+        self.state_shutdown = None
         self.pin = None
         self.on_command = None
         self.off_command = None
@@ -67,19 +67,28 @@ class OutputModule(AbstractOutput):
         self.pulse_length = None
         self.output_state = None
 
-        if not testing:
-            self.initialize_output()
-
-    def initialize_output(self):
+    def setup_output(self):
         from mycodo.devices.wireless_rpi_rf import Transmit433MHz
 
         self.Transmit433MHz = Transmit433MHz
-
         self.pin = self.output.pin
         self.on_command = self.output.on_command
         self.off_command = self.output.off_command
         self.protocol = self.output.protocol
         self.pulse_length = self.output.pulse_length
+        self.setup_on_off_output(OUTPUT_INFORMATION)
+
+        if self.pin is None:
+            self.logger.warning("Invalid pin for output: {}.".format(self.pin))
+            return
+
+        self.wireless_pi_switch = self.Transmit433MHz(
+            self.pin, protocol=int(self.protocol), pulse_length=int(self.pulse_length))
+
+        if self.state_startup == '1':
+            self.output_switch('on')
+        elif self.state_startup == '0':
+            self.output_switch('off')
 
     def output_switch(self, state, output_type=None, amount=None):
         if state == 'on':
@@ -97,12 +106,3 @@ class OutputModule(AbstractOutput):
         if self.wireless_pi_switch:
             return True
         return False
-
-    def setup_output(self):
-        if self.pin is None:
-            self.logger.warning("Invalid pin for output: {}.".format(self.pin))
-            return
-
-        self.wireless_pi_switch = self.Transmit433MHz(
-            self.pin, protocol=int(self.protocol), pulse_length=int(self.pulse_length))
-        self.output_state = False

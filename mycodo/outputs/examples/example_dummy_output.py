@@ -61,10 +61,6 @@ OUTPUT_INFORMATION = {
     # The dictionary of measurements for this output. Don't edit this.
     'measurements_dict': measurements_dict,
 
-    # Should the output controller handle storing whether the output is on or off?
-    # If this output module should handle determining the output state, choose False
-    'on_state_internally_handled': False,
-
     # Type of output. Options: "on_off", "pwm", "volume"
     'output_types': ['on_off'],
 
@@ -152,35 +148,40 @@ class OutputModule(AbstractOutput):
     def __init__(self, output, testing=False):
         super(OutputModule, self).__init__(output, testing=testing, name=__name__)
 
+        self.output = output
+
+        # Initialize user-entered values to None
+        self.gpio_pin = None
+
+        # Store the state of the output
+        self.output_state = False
+
         # Initialize custom option variables to None
         self.bool_value = None
         self.float_value = None
         self.range_value = None
 
         # Set custom option variables to defaults or user-set values
-        self.setup_custom_options(
-            OUTPUT_INFORMATION['custom_options'], output)
+        self.setup_custom_options(OUTPUT_INFORMATION['custom_options'], output)
 
-        if not testing:
-            # Variable to store whether the output has been successfully set up
-            self.output_setup = None
+    def setup_output(self):
+        """Code executed when Mycodo starts up to initialize the output"""
 
-            # Since on_state_internally_handled is False, we will store the state of the output
-            self.output_state = False
+        # Initialize user-entered values to their stored values
+        self.gpio_pin = self.output.pin
 
-            # Variables set by the user interface
-            self.gpio_pin = output.pin
+        self.logger.info(
+            "Output class initialized with: "
+            "gpio_pin: {gp}; "
+            "bool_value: {bt}, {bv}; "
+            "float_value: {ft}, {fv}; "
+            "range_value: {rt}, {rv}".format(
+                gp=self.gpio_pin,
+                bt=type(self.bool_value), bv=self.bool_value,
+                ft=type(self.float_value), fv=self.float_value,
+                rt=type(self.range_value), rv=self.range_value))
 
-            self.logger.info(
-                "Output class initialized with: "
-                "gpio_pin: {gp}; "
-                "bool_value: {bt}, {bv}; "
-                "float_value: {ft}, {fv}; "
-                "range_value: {rt}, {rv}".format(
-                    gp=self.gpio_pin,
-                    bt=type(self.bool_value), bv=self.bool_value,
-                    ft=type(self.float_value), fv=self.float_value,
-                    rt=type(self.range_value), rv=self.range_value))
+        self.output_setup = True
 
     def output_switch(self, state, output_type=None, amount=None, duty_cycle=None):
         """
@@ -197,8 +198,6 @@ class OutputModule(AbstractOutput):
     def is_on(self):
         """
         Code to return the state of the output.
-
-        This can also be handled internally by the output controller if on_state_internally_handled is set to True.
         """
         if self.is_setup():
             if self.output_state:
@@ -210,14 +209,7 @@ class OutputModule(AbstractOutput):
 
     def is_setup(self):
         """Returns whether the output has successfully been set up"""
-        if self.output_setup:
-            return True
-        return False
-
-    def setup_output(self):
-        """Code executed when Mycodo starts up to initialize the output"""
-        self.logger.info("Output set up")
-        self.output_setup = True
+        return self.output_setup
 
     def input_button(self, args_dict):
         """Executed when custom action button pressed"""

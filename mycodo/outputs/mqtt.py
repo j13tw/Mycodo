@@ -35,7 +35,6 @@ OUTPUT_INFORMATION = {
     'measurements_dict': measurements_dict,
     'url_additional': 'http://www.eclipse.org/paho/',
 
-    'on_state_internally_handled': False,
     'output_types': ['on_off'],
     'interfaces': ['Mycodo'],
 
@@ -124,8 +123,10 @@ class OutputModule(AbstractOutput):
     def __init__(self, output, testing=False):
         super(OutputModule, self).__init__(output, testing=testing, name=__name__)
 
-        self.output_setup = None
-        self.output_state = False
+        self.publish = None
+        self.state_startup = None
+        self.state_shutdown = None
+        self.output_state = None
 
         self.hostname = None
         self.port = None
@@ -134,16 +135,21 @@ class OutputModule(AbstractOutput):
         self.clientid = None
         self.payload_off = None
         self.payload_on = None
-        self.setup_custom_options(
-            OUTPUT_INFORMATION['custom_options'], output)
+        self.setup_custom_options(OUTPUT_INFORMATION['custom_options'], output)
 
-        if not testing:
-            self.initialize_output()
-
-    def initialize_output(self):
+    def setup_output(self):
         import paho.mqtt.publish as publish
 
         self.publish = publish
+        self.state_startup = self.output.state_startup
+        self.state_shutdown = self.output.state_shutdown
+        self.setup_on_off_output(OUTPUT_INFORMATION)
+        self.output_setup = True
+
+        if self.state_startup == '1':
+            self.output_switch('on')
+        elif self.state_startup == '0':
+            self.output_switch('off')
 
     def output_switch(self, state, output_type=None, amount=None):
         try:
@@ -169,11 +175,7 @@ class OutputModule(AbstractOutput):
             self.logger.error("State change error: {}".format(e))
 
     def is_on(self):
-        if self.is_setup():
-            return self.output_state
+        return self.output_state
 
     def is_setup(self):
         return self.output_setup
-
-    def setup_output(self):
-        self.output_setup = True

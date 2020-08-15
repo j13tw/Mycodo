@@ -26,8 +26,6 @@ OUTPUT_INFORMATION = {
     'output_name_unique': 'python',
     'output_name': "{} Python Code".format(lazy_gettext('On/Off')),
     'measurements_dict': measurements_dict,
-
-    'on_state_internally_handled': False,
     'output_types': ['on_off'],
 
     'message': 'Python 3 code will be executed when this output is turned on or off.',
@@ -56,42 +54,19 @@ class OutputModule(AbstractOutput):
     def __init__(self, output, testing=False):
         super(OutputModule, self).__init__(output, testing=testing, name=__name__)
 
-        self.output_setup = None
         self.output_state = None
+        self.state_startup = None
+        self.state_shutdown = None
         self.on_command = None
         self.off_command = None
         self.run_python_on = None
         self.run_python_off = None
 
-        if not testing:
-            self.initialize_output()
-
-    def initialize_output(self):
+    def setup_output(self):
         self.on_command = self.output.on_command
         self.off_command = self.output.off_command
+        self.setup_on_off_output(OUTPUT_INFORMATION)
 
-    def output_switch(self, state, output_type=None, amount=None):
-        if state == 'on' and self.on_command:
-            self.run_python_on.output_code_run()
-            self.output_state = True
-        elif state == 'off' and self.off_command:
-            self.run_python_off.output_code_run()
-            self.output_state = False
-        else:
-            return
-
-    def is_on(self):
-        if self.is_setup():
-            if self.output_state:
-                return True
-            return False
-
-    def is_setup(self):
-        if self.output_setup:
-            return True
-        return False
-
-    def setup_output(self):
         if not self.on_command or not self.off_command:
             self.logger.error("Output must have both On and Off Python Code set")
             return
@@ -116,6 +91,27 @@ class OutputModule(AbstractOutput):
             self.output_setup = True
         except Exception:
             self.logger.exception("Could not set up output")
+
+        if self.state_startup == '1':
+            self.output_switch('on')
+        elif self.state_startup == '0':
+            self.output_switch('off')
+
+    def output_switch(self, state, output_type=None, amount=None):
+        if state == 'on' and self.on_command:
+            self.run_python_on.output_code_run()
+            self.output_state = True
+        elif state == 'off' and self.off_command:
+            self.run_python_off.output_code_run()
+            self.output_state = False
+        else:
+            return
+
+    def is_on(self):
+        return self.output_state
+
+    def is_setup(self):
+        return self.output_setup
 
     def save_output_python_code(self, unique_id):
         """Save python code to files"""

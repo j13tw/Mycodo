@@ -32,12 +32,11 @@ OUTPUT_INFORMATION = {
     'output_name_unique': 'atlas_ezo_pmp',
     'output_name': "{} (Atlas Scientific)".format(lazy_gettext('Peristaltic Pump')),
     'measurements_dict': measurements_dict,
+    'output_types': ['volume', 'on_off'],
+
     'url_manufacturer': 'https://atlas-scientific.com/peristaltic/',
     'url_datasheet': 'https://www.atlas-scientific.com/files/EZO_PMP_Datasheet.pdf',
     'url_product_purchase': 'https://atlas-scientific.com/peristaltic/ezo-pmp/',
-
-    'on_state_internally_handled': False,
-    'output_types': ['volume', 'on_off'],
 
     'message': 'Atlas Scientific peristaltic pumps can be set to dispense at their maximum rate or a '
                'rate can be specified. Their minimum flow rate is 0.5 ml/min and their maximum is 105 ml/min.',
@@ -80,15 +79,12 @@ class OutputModule(AbstractOutput):
         self.mode = None
         self.flow_rate = None
 
-        if not testing:
-            self.initialize_output()
-
-    def initialize_output(self):
+    def setup_output(self):
         self.interface = self.output.interface
         self.mode = self.output.output_mode
         self.flow_rate = self.output.flow_rate
+        self.setup_on_off_output(OUTPUT_INFORMATION)
 
-    def setup_output(self):
         if self.interface == 'FTDI':
             from mycodo.devices.atlas_scientific_ftdi import AtlasScientificFTDI
             self.atlas_command = AtlasScientificFTDI(self.output.ftdi_location)
@@ -104,6 +100,9 @@ class OutputModule(AbstractOutput):
                 baudrate=self.output.baud_rate)
         else:
             self.logger.error("Unknown interface: {}".format(self.interface))
+            return
+
+        self.output_setup = True
 
     def record_dispersal(self, amount_ml=None, seconds_to_run=None):
         measure_dict = copy.deepcopy(measurements_dict)
@@ -208,6 +207,4 @@ class OutputModule(AbstractOutput):
             return False
 
     def is_setup(self):
-        if self.atlas_command:
-            return True
-        return False
+        return self.output_setup

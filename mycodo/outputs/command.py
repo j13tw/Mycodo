@@ -21,8 +21,6 @@ OUTPUT_INFORMATION = {
     'output_name': "{} Shell Script".format(lazy_gettext('On/Off')),
     'output_library': 'subprocess.Popen',
     'measurements_dict': measurements_dict,
-
-    'on_state_internally_handled': False,
     'output_types': ['on_off'],
 
     'message': 'Commands will be executed in the Linux shell by the specified user when this output is '
@@ -53,19 +51,32 @@ class OutputModule(AbstractOutput):
     def __init__(self, output, testing=False):
         super(OutputModule, self).__init__(output, testing=testing, name=__name__)
 
-        self.output_setup = None
         self.output_state = None
+        self.state_startup = None
+        self.state_shutdown = None
         self.on_command = None
         self.off_command = None
         self.linux_command_user = None
 
-        if not testing:
-            self.initialize_output()
-
-    def initialize_output(self):
+    def setup_output(self):
+        self.state_startup = self.output.state_startup
+        self.state_shutdown = self.output.state_shutdown
         self.on_command = self.output.on_command
         self.off_command = self.output.off_command
         self.linux_command_user = self.output.linux_command_user
+        self.setup_on_off_output(OUTPUT_INFORMATION)
+
+        if self.on_command and self.off_command:
+            self.output_setup = True
+            self.output_state = False
+        else:
+            self.output_setup = False
+            self.logger.error("Output must have both On and Off commands set")
+
+        if self.state_startup == '1':
+            self.output_switch('on')
+        elif self.state_startup == '0':
+            self.output_switch('off')
 
     def output_switch(self, state, output_type=None, amount=None):
         if state == 'on':
@@ -88,11 +99,3 @@ class OutputModule(AbstractOutput):
     def is_setup(self):
         if self.output_setup:
             return True
-
-    def setup_output(self):
-        if self.on_command and self.off_command:
-            self.output_setup = True
-            self.output_state = False
-        else:
-            self.output_setup = False
-            self.logger.error("Output must have both On and Off commands set")
